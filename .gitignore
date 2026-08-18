@@ -1,0 +1,58 @@
+# =========================
+# FPGA / Hardware Build Artifacts
+# =========================
+# Gowin EDA output directories
+impl/
+out/
+build/
+
+# Bitstreams and programming files
+*.fs
+*.bit
+*.bin
+*.svf
+*.jic
+
+# Synthesis and Place & Route logs/reports
+*.log
+*.rpt
+*.srp
+*.tr
+*.posp
+*.db
+*.power
+
+# =========================
+# Simulation & Verification
+# =========================
+# Waveform dumps (these get massive quickly)
+*.vcd
+*.ghw
+*.fst
+*.lxt
+
+# Compiled simulation models (Icarus Verilog, Verilator, etc.)
+*.vvp
+*.out
+obj_dir/
+
+# =========================
+# RISC-V Software / Firmware
+# =========================
+# Compiled C/C++/Assembly objects for your soft-core
+*.o
+*.elf
+*.hex
+*.mif
+*.map
+
+# =========================
+# Editor & OS Files
+# =========================
+# VS Code (Ignores local history but keeps tasks/launch configs if you make them)
+.vscode/.history/
+*.code-workspace
+
+# OS junk
+.DS_Store
+Thumbs.db
