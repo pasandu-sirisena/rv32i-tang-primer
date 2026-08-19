@@ -5,7 +5,6 @@
 // Initialized with $readmemh from firmware.hex.
 //
 // Word-level writes only to enable Gowin BSRAM inference by Yosys.
-// Byte/halfword masking is handled by the CPU pipeline.
 // =============================================================================
 module wb_bram (
     input  wire        clk,
@@ -35,29 +34,21 @@ module wb_bram (
     always @(posedge clk)
         irdata <= mem[iaddr];
 
-    // ---- Port B: synchronous read / write (data access) ----
-    // Word-level write for BSRAM inference.  The core's MEM stage
-    // performs a read-modify-write when executing SB/SH, so the
-    // BRAM only ever sees full-word SW operations in practice.
-    reg [31:0] portb_rdata;
-    always @(posedge clk) begin
-        portb_rdata <= mem[waddr];
-        if (wb_cyc_i && wb_stb_i && wb_we_i)
-            mem[waddr] <= wb_dat_i;
-    end
-
-    // ---- Wishbone handshake (1-cycle ack) ----
+    // ---- Port B: Wishbone data access ----
+    // Single-cycle ack: on the rising edge where stb is seen, we register
+    // the read data and assert ack.  The master samples wb_dat_o on the
+    // same edge it sees ack=1.
     always @(posedge clk) begin
         if (!rst_n) begin
             wb_ack_o <= 1'b0;
             wb_dat_o <= 32'd0;
+        end else if (wb_cyc_i && wb_stb_i && !wb_ack_o) begin
+            wb_ack_o <= 1'b1;
+            wb_dat_o <= mem[waddr];        // synchronous read
+            if (wb_we_i)
+                mem[waddr] <= wb_dat_i;    // synchronous write
         end else begin
-            if (wb_cyc_i && wb_stb_i && !wb_ack_o) begin
-                wb_ack_o <= 1'b1;
-                wb_dat_o <= portb_rdata;
-            end else begin
-                wb_ack_o <= 1'b0;
-            end
+            wb_ack_o <= 1'b0;
         end
     end
 

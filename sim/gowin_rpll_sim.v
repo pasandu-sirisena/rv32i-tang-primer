@@ -44,6 +44,7 @@ module rPLL (
     parameter CLKOUTD_BYPASS   = "false";
     parameter DYN_SDIV_SEL     = 2;
     parameter CLKOUTD_SRC      = "CLKOUT";
+    parameter CLKOUTD3_SRC     = "CLKOUT";
     parameter CLKOUTP_EN       = "false";
     parameter CLKOUTD_EN       = "false";
     parameter CLKOUTD3_EN      = "false";
