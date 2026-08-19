@@ -11,6 +11,7 @@ module wb_bram (
     input  wire        rst_n,
     // ---- Port A: instruction read ----
     input  wire [12:0] iaddr,       // word address (PC[14:2])
+    input  wire        ice,         // instruction port clock enable (!stall_if)
     output reg  [31:0] irdata,      // instruction data (registered output)
     // ---- Port B: Wishbone slave ----
     input  wire        wb_cyc_i,
@@ -31,8 +32,10 @@ module wb_bram (
     wire [12:0] waddr = wb_adr_i[14:2];   // word address for data port
 
     // ---- Port A: synchronous read (instruction fetch) ----
-    always @(posedge clk)
-        irdata <= mem[iaddr];
+    always @(posedge clk) begin
+        if (ice)
+            irdata <= mem[iaddr];
+    end
 
     // ---- Port B: Wishbone data access ----
     // Single-cycle ack: on the rising edge where stb is seen, we register

@@ -15,6 +15,7 @@ module rv32im_core (
     input  wire        rst_n,
     // ---- Instruction memory port (direct to BRAM port-A) ----
     output wire [12:0] instr_addr,   // word address into 8 K-word BRAM
+    output wire        instr_ce,     // clock enable for instruction memory
     input  wire [31:0] instr_rdata,  // instruction from BRAM (1-cycle latency)
     // ---- Data Wishbone B4 master ----
     output wire        wb_cyc_o,
@@ -58,6 +59,7 @@ module rv32im_core (
 
     // BRAM address = word address = PC[14:2]
     assign instr_addr = pc[14:2];
+    assign instr_ce   = !stall_if;
 
     always @(posedge clk) begin
         if (!rst_n) begin

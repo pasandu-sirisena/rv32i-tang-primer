@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 // =============================================================================
 // Behavioural simulation model for Gowin rPLL
 // Used by iverilog; Yosys uses the real primitive during synthesis.

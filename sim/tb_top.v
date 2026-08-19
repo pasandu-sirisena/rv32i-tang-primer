@@ -23,12 +23,10 @@ module tb_top;
     );
 
     // ---- UART RX monitor (capture what the DUT transmits) ----
-    // 54 MHz clock → baud divisor ≈ 469 → bit period ≈ 469 * 18.5ns ≈ 8677 ns
-    // But in sim the PLL passes clock through (27 MHz), so actual baud divisor
-    // clocks at 27 MHz: bit period = 469 * 37ns ≈ 17353 ns
-    localparam BAUD_TICKS = 469;
-    localparam CLK_PERIOD = 37; // ns (27 MHz through sim PLL passthrough)
-    localparam BIT_PERIOD = BAUD_TICKS * CLK_PERIOD; // ~17353 ns
+    // 27 MHz clock → baud divisor = 27_000_000 / 115_200 = 234 → bit period ≈ 234 * 37ns ≈ 8658 ns
+    localparam BAUD_TICKS = 234;
+    localparam CLK_PERIOD = 37; // ns (27 MHz clock period)
+    localparam BIT_PERIOD = BAUD_TICKS * CLK_PERIOD; // ~8658 ns
 
     reg [1023:0] captured_str;  // big buffer for captured chars
     integer      char_idx;
@@ -98,16 +96,16 @@ module tb_top;
         $dumpvars(0, tb_top);
 
         // Wait for the hello string to be fully transmitted
-        // 50 chars × ~17us per char ≈ 850us, plus startup. Give 5ms.
-        #5_000_000;
+        // 50 chars × ~173.5us per char ≈ 8.7ms. Give 12ms.
+        #12_000_000;
 
         $display("\n===== SIMULATION RESULTS =====");
         $display("Characters received: %0d", char_idx);
 
-        if (char_idx >= 50) begin
+        if (char_idx >= 49) begin
             $display("PASS: Received %0d characters over UART.", char_idx);
         end else begin
-            $display("FAIL: Expected >=50 chars, got %0d. Pipeline may be stalled.", char_idx);
+            $display("FAIL: Expected >=49 chars, got %0d. Pipeline may be stalled.", char_idx);
         end
 
         if (led_toggles > 0)

@@ -12,23 +12,23 @@ module top (
 );
 
     // =====================================================================
-    //  Clock & Reset
+    //  Clock & Power-On Reset (27 MHz direct)
     // =====================================================================
-    wire sys_clk;
-    wire pll_lock;
+    wire sys_clk = clk_27mhz;
 
-    pll_50mhz u_pll (
-        .clk_in  (clk_27mhz),
-        .clk_out (sys_clk),
-        .lock    (pll_lock)
-    );
+    reg [7:0] rst_cnt = 8'd0;
+    wire rst_n = (rst_cnt == 8'hFF);
 
-    wire rst_n = pll_lock;   // reset released when PLL locks
+    always @(posedge sys_clk) begin
+        if (rst_cnt != 8'hFF)
+            rst_cnt <= rst_cnt + 8'd1;
+    end
 
     // =====================================================================
     //  RV32IM Core
     // =====================================================================
     wire [12:0] instr_addr;
+    wire        instr_ce;
     wire [31:0] instr_rdata;
 
     wire        m_cyc, m_stb, m_we;
@@ -41,6 +41,7 @@ module top (
         .clk         (sys_clk),
         .rst_n       (rst_n),
         .instr_addr  (instr_addr),
+        .instr_ce    (instr_ce),
         .instr_rdata (instr_rdata),
         .wb_cyc_o    (m_cyc),
         .wb_stb_o    (m_stb),
@@ -102,6 +103,7 @@ module top (
         .rst_n    (rst_n),
         // Instruction port
         .iaddr    (instr_addr),
+        .ice      (instr_ce),
         .irdata   (instr_rdata),
         // Data port (Wishbone)
         .wb_cyc_i (s0_cyc),
@@ -115,10 +117,10 @@ module top (
     );
 
     // =====================================================================
-    //  UART — 115 200 baud  (54 MHz clock)
+    //  UART — 115 200 baud  (27 MHz clock)
     // =====================================================================
     wb_uart #(
-        .CLK_FREQ  (54_000_000),
+        .CLK_FREQ  (27_000_000),
         .BAUD_RATE (115_200)
     ) u_uart (
         .clk      (sys_clk),
