@@ -1,23 +1,15 @@
-// =============================================================================
-// RV32IM Pipelined Core — 5-stage: IF, ID, EX, MEM, WB
-//
-// Instruction port : direct synchronous read from BRAM (not Wishbone)
-// Data port        : Wishbone B4 classic master for loads/stores/peripherals
-//
-// Features:
-//   • Full data forwarding (MEM→EX, WB→EX)
-//   • Load-use hazard detection with 1-cycle stall
-//   • 2-cycle branch penalty (predict not-taken)
-//   • M-extension: combinational MUL, sequential DIV (33-cycle stall)
-// =============================================================================
+// Pipelined RV32IM processor core
 module rv32im_core (
+    // Clock and active-low reset
     input  wire        clk,
     input  wire        rst_n,
-    // ---- Instruction memory port (direct to BRAM port-A) ----
-    output wire [12:0] instr_addr,   // word address into 8 K-word BRAM
-    output wire        instr_ce,     // clock enable for instruction memory
-    input  wire [31:0] instr_rdata,  // instruction from BRAM (1-cycle latency)
-    // ---- Data Wishbone B4 master ----
+
+    // Instruction memory bus interface
+    output wire [12:0] instr_addr,
+    output wire        instr_ce,
+    input  wire [31:0] instr_rdata,
+
+    // Wishbone data memory master interface
     output wire        wb_cyc_o,
     output wire        wb_stb_o,
     output wire        wb_we_o,
@@ -28,28 +20,22 @@ module rv32im_core (
     input  wire        wb_ack_i
 );
 
-    // =====================================================================
-    //  Local parameters – ALU operation codes (must match alu.v)
-    // =====================================================================
+    // ALU operation encoding parameters
     localparam ALU_ADD   = 4'd0,  ALU_SUB  = 4'd1,  ALU_SLL  = 4'd2,
                ALU_SLT  = 4'd3,  ALU_SLTU = 4'd4,  ALU_XOR  = 4'd5,
                ALU_SRL  = 4'd6,  ALU_SRA  = 4'd7,  ALU_OR   = 4'd8,
                ALU_AND  = 4'd9,  ALU_PASSB= 4'd10;
 
-    // Writeback source select
+    // Writeback multiplexer source parameters
     localparam WB_ALU = 2'd0, WB_MEM = 2'd1, WB_PC4 = 2'd2;
 
-    // =====================================================================
-    //  Wires from hazard / forwarding units
-    // =====================================================================
+    // Hazard detection and forwarding control wires
     wire       stall_if, stall_id, stall_ex, stall_mem;
     wire       flush_if_id, flush_id_ex;
-    wire       take_branch;       // branch or jump resolved in EX
+    wire       take_branch;
     wire [1:0] fwd_a, fwd_b;
 
-    // =====================================================================
-    // ██  IF  ██  Instruction Fetch
-    // =====================================================================
+    // Instruction fetch stage registers and program counter
     reg  [31:0] pc;
     reg         if_id_valid;
     reg  [31:0] if_id_pc;
@@ -57,10 +43,10 @@ module rv32im_core (
     wire [31:0] pc_plus4 = pc + 32'd4;
     wire [31:0] pc_next;
 
-    // BRAM address = word address = PC[14:2]
     assign instr_addr = pc[14:2];
     assign instr_ce   = !stall_if;
 
+    // Program counter update process
     always @(posedge clk) begin
         if (!rst_n) begin
             pc          <= 32'd0;
@@ -69,24 +55,20 @@ module rv32im_core (
         end else begin
             if (take_branch && !stall_ex) begin
                 pc          <= pc_next;
-                if_id_valid <= 1'b0;       // bubble after branch
+                if_id_valid <= 1'b0;
                 if_id_pc    <= 32'd0;
             end else if (!stall_if) begin
                 pc          <= pc_plus4;
                 if_id_valid <= 1'b1;
                 if_id_pc    <= pc;
             end
-            // if stalled: hold pc, if_id_valid, if_id_pc
         end
     end
 
-    // The BRAM registered output is the instruction for the PC presented
-    // on the *previous* clock edge.  It serves as the IF/ID instruction.
-    wire [31:0] if_id_instr = if_id_valid ? instr_rdata : 32'h0000_0013; // NOP
+    // Instruction word for decode stage
+    wire [31:0] if_id_instr = if_id_valid ? instr_rdata : 32'h0000_0013;
 
-    // =====================================================================
-    // ██  ID  ██  Instruction Decode
-    // =====================================================================
+    // Instruction fields decoding
     wire [6:0] opcode  = if_id_instr[6:0];
     wire [4:0] rd_id   = if_id_instr[11:7];
     wire [2:0] funct3  = if_id_instr[14:12];
@@ -94,7 +76,7 @@ module rv32im_core (
     wire [4:0] rs2_id  = if_id_instr[24:20];
     wire [6:0] funct7  = if_id_instr[31:25];
 
-    // ---- Immediate generation ----
+    // Immediate generation for all instruction formats
     wire [31:0] imm_i = {{20{if_id_instr[31]}}, if_id_instr[31:20]};
     wire [31:0] imm_s = {{20{if_id_instr[31]}}, if_id_instr[31:25], if_id_instr[11:7]};
     wire [31:0] imm_b = {{19{if_id_instr[31]}}, if_id_instr[31], if_id_instr[7],
@@ -103,29 +85,30 @@ module rv32im_core (
     wire [31:0] imm_j = {{11{if_id_instr[31]}}, if_id_instr[31], if_id_instr[19:12],
                           if_id_instr[20], if_id_instr[30:21], 1'b0};
 
+    // Immediate selection multiplexer
     reg [31:0] imm_id;
     always @(*) begin
         case (opcode)
-            7'b0010011: imm_id = imm_i;  // I-type ALU
-            7'b0000011: imm_id = imm_i;  // Load
-            7'b1100111: imm_id = imm_i;  // JALR
-            7'b0100011: imm_id = imm_s;  // Store
-            7'b1100011: imm_id = imm_b;  // Branch
-            7'b0110111: imm_id = imm_u;  // LUI
-            7'b0010111: imm_id = imm_u;  // AUIPC
-            7'b1101111: imm_id = imm_j;  // JAL
+            7'b0010011: imm_id = imm_i;
+            7'b0000011: imm_id = imm_i;
+            7'b1100111: imm_id = imm_i;
+            7'b0100011: imm_id = imm_s;
+            7'b1100011: imm_id = imm_b;
+            7'b0110111: imm_id = imm_u;
+            7'b0010111: imm_id = imm_u;
+            7'b1101111: imm_id = imm_j;
             default:    imm_id = 32'd0;
         endcase
     end
 
-    // ---- Control signal decode ----
+    // Control signals for pipeline execution
     reg        ctrl_reg_write;
     reg        ctrl_mem_read;
     reg        ctrl_mem_write;
-    reg        ctrl_alu_src_b;  // 0=rs2, 1=imm
-    reg        ctrl_alu_src_a;  // 0=rs1, 1=PC (AUIPC)
+    reg        ctrl_alu_src_b;
+    reg        ctrl_alu_src_a;
     reg [3:0]  ctrl_alu_op;
-    reg [1:0]  ctrl_wb_sel;     // 0=ALU, 1=MEM, 2=PC+4
+    reg [1:0]  ctrl_wb_sel;
     reg        ctrl_is_branch;
     reg        ctrl_is_jal;
     reg        ctrl_is_jalr;
@@ -134,8 +117,8 @@ module rv32im_core (
 
     wire is_mext = (opcode == 7'b0110011) && (funct7 == 7'b0000001);
 
+    // Main instruction control decoder
     always @(*) begin
-        // Defaults
         ctrl_reg_write = 1'b0;  ctrl_mem_read  = 1'b0;
         ctrl_mem_write = 1'b0;  ctrl_alu_src_b = 1'b0;
         ctrl_alu_src_a = 1'b0;  ctrl_alu_op    = ALU_ADD;
@@ -145,12 +128,12 @@ module rv32im_core (
         ctrl_is_div    = 1'b0;
 
         case (opcode)
-            // ------ R-type (register-register) ------
+            // Register-register arithmetic and M-extension
             7'b0110011: begin
                 ctrl_reg_write = 1'b1;
                 if (is_mext) begin
-                    if (funct3[2] == 1'b0) ctrl_is_mul = 1'b1;   // MUL*
-                    else                   ctrl_is_div = 1'b1;   // DIV*
+                    if (funct3[2] == 1'b0) ctrl_is_mul = 1'b1;
+                    else                   ctrl_is_div = 1'b1;
                 end else begin
                     case (funct3)
                         3'b000: ctrl_alu_op = (funct7[5]) ? ALU_SUB : ALU_ADD;
@@ -165,7 +148,7 @@ module rv32im_core (
                 end
             end
 
-            // ------ I-type ALU ------
+            // Immediate arithmetic instructions
             7'b0010011: begin
                 ctrl_reg_write = 1'b1;
                 ctrl_alu_src_b = 1'b1;
@@ -181,7 +164,7 @@ module rv32im_core (
                 endcase
             end
 
-            // ------ Loads ------
+            // Memory load instructions
             7'b0000011: begin
                 ctrl_reg_write = 1'b1;
                 ctrl_alu_src_b = 1'b1;
@@ -190,42 +173,42 @@ module rv32im_core (
                 ctrl_wb_sel    = WB_MEM;
             end
 
-            // ------ Stores ------
+            // Memory store instructions
             7'b0100011: begin
                 ctrl_alu_src_b = 1'b1;
                 ctrl_alu_op    = ALU_ADD;
                 ctrl_mem_write = 1'b1;
             end
 
-            // ------ Branches ------
+            // Conditional branch instructions
             7'b1100011: begin
                 ctrl_is_branch = 1'b1;
-                ctrl_alu_op    = ALU_SUB;  // for comparison
+                ctrl_alu_op    = ALU_SUB;
             end
 
-            // ------ LUI ------
+            // Load upper immediate instruction
             7'b0110111: begin
                 ctrl_reg_write = 1'b1;
                 ctrl_alu_src_b = 1'b1;
                 ctrl_alu_op    = ALU_PASSB;
             end
 
-            // ------ AUIPC ------
+            // Add upper immediate to PC instruction
             7'b0010111: begin
                 ctrl_reg_write = 1'b1;
-                ctrl_alu_src_a = 1'b1;    // use PC
+                ctrl_alu_src_a = 1'b1;
                 ctrl_alu_src_b = 1'b1;
                 ctrl_alu_op    = ALU_ADD;
             end
 
-            // ------ JAL ------
+            // Jump and link instruction
             7'b1101111: begin
                 ctrl_reg_write = 1'b1;
                 ctrl_is_jal    = 1'b1;
                 ctrl_wb_sel    = WB_PC4;
             end
 
-            // ------ JALR ------
+            // Jump and link register instruction
             7'b1100111: begin
                 ctrl_reg_write = 1'b1;
                 ctrl_alu_src_b = 1'b1;
@@ -234,12 +217,11 @@ module rv32im_core (
                 ctrl_wb_sel    = WB_PC4;
             end
 
-            // ------ FENCE / ECALL / EBREAK → NOP ------
             default: begin end
         endcase
     end
 
-    // ---- Register file read ----
+    // General purpose register file
     wire [31:0] rf_rs1, rf_rs2;
     wire        wb_rf_wr_en;
     wire [4:0]  wb_rf_wr_addr;
@@ -256,9 +238,7 @@ module rv32im_core (
         .rs2_data (rf_rs2)
     );
 
-    // =====================================================================
-    // ██  ID/EX Pipeline Register  ██
-    // =====================================================================
+    // Pipeline registers between ID and EX stages
     reg [31:0] id_ex_pc, id_ex_pc4;
     reg [31:0] id_ex_rs1, id_ex_rs2;
     reg [31:0] id_ex_imm;
@@ -313,12 +293,8 @@ module rv32im_core (
         end
     end
 
-    // =====================================================================
-    // ██  EX  ██  Execute
-    // =====================================================================
-
-    // ---- Forwarding muxes ----
-    wire [31:0] ex_mem_result;    // from EX/MEM pipeline register (defined below)
+    // Operand forwarding multiplexers
+    wire [31:0] ex_mem_result;
     wire [31:0] fwd_rs1_data = (fwd_a == 2'b10) ? ex_mem_result  :
                                (fwd_a == 2'b01) ? wb_rf_wr_data  :
                                                    id_ex_rs1;
@@ -326,11 +302,11 @@ module rv32im_core (
                                (fwd_b == 2'b01) ? wb_rf_wr_data  :
                                                    id_ex_rs2;
 
-    // ---- ALU operand selection ----
+    // ALU input multiplexers
     wire [31:0] alu_a = id_ex_alu_src_a ? id_ex_pc  : fwd_rs1_data;
     wire [31:0] alu_b = id_ex_alu_src_b ? id_ex_imm : fwd_rs2_data;
 
-    // ---- ALU ----
+    // ALU execution unit
     wire [31:0] alu_result;
     alu u_alu (
         .alu_op (id_ex_alu_op),
@@ -339,7 +315,7 @@ module rv32im_core (
         .result (alu_result)
     );
 
-    // ---- Multiplier ----
+    // Hardware multiplier unit
     wire [31:0] mul_result;
     multiply u_mul (
         .a      (fwd_rs1_data),
@@ -348,10 +324,9 @@ module rv32im_core (
         .result (mul_result)
     );
 
-    // ---- Divider ----
+    // Hardware divider unit
     wire [31:0] div_result;
     wire        div_busy, div_done;
-    // Start divider on the first cycle the div instruction appears in EX
     reg         div_started;
     always @(posedge clk) begin
         if (!rst_n)
@@ -369,33 +344,33 @@ module rv32im_core (
         .start     (div_start),
         .dividend  (fwd_rs1_data),
         .divisor   (fwd_rs2_data),
-        .is_signed (id_ex_funct3[0] == 1'b0),  // DIV/REM are signed, DIVU/REMU are unsigned
-        .is_rem    (id_ex_funct3[1]),            // REM/REMU vs DIV/DIVU
+        .is_signed (id_ex_funct3[0] == 1'b0),
+        .is_rem    (id_ex_funct3[1]),
         .result    (div_result),
         .busy      (div_busy),
         .done      (div_done)
     );
 
-    // ---- EX result mux ----
+    // Execute stage output multiplexer
     wire [31:0] ex_result = id_ex_is_mul ? mul_result :
                             id_ex_is_div ? div_result :
                             (id_ex_wb_sel == WB_PC4) ? id_ex_pc4 :
                             alu_result;
 
-    // ---- Branch target computation ----
+    // Branch and jump target calculations
     wire [31:0] branch_target = id_ex_pc + id_ex_imm;
     wire [31:0] jalr_target   = (fwd_rs1_data + id_ex_imm) & 32'hFFFF_FFFE;
 
-    // ---- Branch condition evaluation ----
+    // Conditional branch evaluation
     reg branch_cond;
     always @(*) begin
         case (id_ex_funct3)
-            3'b000:  branch_cond = (fwd_rs1_data == fwd_rs2_data);                  // BEQ
-            3'b001:  branch_cond = (fwd_rs1_data != fwd_rs2_data);                  // BNE
-            3'b100:  branch_cond = ($signed(fwd_rs1_data) < $signed(fwd_rs2_data)); // BLT
-            3'b101:  branch_cond = ($signed(fwd_rs1_data) >= $signed(fwd_rs2_data));// BGE
-            3'b110:  branch_cond = (fwd_rs1_data < fwd_rs2_data);                   // BLTU
-            3'b111:  branch_cond = (fwd_rs1_data >= fwd_rs2_data);                  // BGEU
+            3'b000:  branch_cond = (fwd_rs1_data == fwd_rs2_data);
+            3'b001:  branch_cond = (fwd_rs1_data != fwd_rs2_data);
+            3'b100:  branch_cond = ($signed(fwd_rs1_data) < $signed(fwd_rs2_data));
+            3'b101:  branch_cond = ($signed(fwd_rs1_data) >= $signed(fwd_rs2_data));
+            3'b110:  branch_cond = (fwd_rs1_data < fwd_rs2_data);
+            3'b111:  branch_cond = (fwd_rs1_data >= fwd_rs2_data);
             default: branch_cond = 1'b0;
         endcase
     end
@@ -404,21 +379,19 @@ module rv32im_core (
                         && id_ex_valid;
     assign pc_next = id_ex_is_jalr ? jalr_target : branch_target;
 
-    // ---- Store data and byte selects ----
+    // Store data formatting and byte mask generation
     wire [31:0] store_data;
     wire [3:0]  store_sel;
     wire [1:0]  byte_off = alu_result[1:0];
 
-    assign store_data = (id_ex_funct3[1:0] == 2'b00) ? {4{fwd_rs2_data[7:0]}}  :   // SB
-                        (id_ex_funct3[1:0] == 2'b01) ? {2{fwd_rs2_data[15:0]}} :   // SH
-                                                        fwd_rs2_data;                // SW
+    assign store_data = (id_ex_funct3[1:0] == 2'b00) ? {4{fwd_rs2_data[7:0]}}  :
+                        (id_ex_funct3[1:0] == 2'b01) ? {2{fwd_rs2_data[15:0]}} :
+                                                        fwd_rs2_data;
     assign store_sel  = (id_ex_funct3[1:0] == 2'b00) ? (4'b0001 << byte_off) :
                         (id_ex_funct3[1:0] == 2'b01) ? (byte_off[1] ? 4'b1100 : 4'b0011) :
                                                         4'b1111;
 
-    // =====================================================================
-    // ██  EX/MEM Pipeline Register  ██
-    // =====================================================================
+    // Pipeline registers between EX and MEM stages
     reg [31:0] ex_mem_alu;
     reg [31:0] ex_mem_store_data;
     reg [3:0]  ex_mem_store_sel;
@@ -438,10 +411,7 @@ module rv32im_core (
             ex_mem_store_sel <= 4'd0;  ex_mem_funct3     <= 3'd0;
             ex_mem_pc4       <= 32'd0;
         end else if (!stall_ex) begin
-            // If stall_mem is active but not stall_ex, should not happen due to
-            // priority chain. If stall_ex insert bubble.
             if (stall_mem) begin
-                // Should not reach here (stall_ex >= stall_mem), but safety:
                 ex_mem_reg_write <= 0; ex_mem_mem_read <= 0; ex_mem_mem_write <= 0;
                 ex_mem_valid <= 0;
             end else begin
@@ -458,33 +428,29 @@ module rv32im_core (
                 ex_mem_valid      <= id_ex_valid;
             end
         end
-        // if stall_ex: hold
     end
 
-    // Value forwarded from MEM stage
     assign ex_mem_result = (ex_mem_wb_sel == WB_PC4) ? ex_mem_pc4 : ex_mem_alu;
 
-    // =====================================================================
-    // ██  MEM  ██  Memory Access (Wishbone master)
-    // =====================================================================
+    // Memory access and Wishbone bus master control
     wire mem_active = ex_mem_mem_read | ex_mem_mem_write;
     wire wb_wait    = mem_active & ~wb_ack_i;
 
     assign wb_cyc_o = mem_active;
     assign wb_stb_o = mem_active;
     assign wb_we_o  = ex_mem_mem_write;
-    assign wb_adr_o = ex_mem_alu;          // address from ALU
+    assign wb_adr_o = ex_mem_alu;
     assign wb_dat_o = ex_mem_store_data;
     assign wb_sel_o = ex_mem_mem_write ? ex_mem_store_sel : 4'b1111;
 
-    // ---- Load data extraction (byte / halfword / word, signed / unsigned) ----
+    // Load data alignment and sign extension
     wire [31:0] raw_load = wb_dat_i;
     wire [1:0]  load_off = ex_mem_alu[1:0];
 
     reg [31:0] load_data;
     always @(*) begin
         case (ex_mem_funct3)
-            3'b000: begin // LB
+            3'b000: begin
                 case (load_off)
                     2'b00: load_data = {{24{raw_load[7]}},  raw_load[7:0]};
                     2'b01: load_data = {{24{raw_load[15]}}, raw_load[15:8]};
@@ -492,12 +458,12 @@ module rv32im_core (
                     2'b11: load_data = {{24{raw_load[31]}}, raw_load[31:24]};
                 endcase
             end
-            3'b001: begin // LH
+            3'b001: begin
                 load_data = load_off[1] ? {{16{raw_load[31]}}, raw_load[31:16]}
                                         : {{16{raw_load[15]}}, raw_load[15:0]};
             end
-            3'b010: load_data = raw_load; // LW
-            3'b100: begin // LBU
+            3'b010: load_data = raw_load;
+            3'b100: begin
                 case (load_off)
                     2'b00: load_data = {24'd0, raw_load[7:0]};
                     2'b01: load_data = {24'd0, raw_load[15:8]};
@@ -505,7 +471,7 @@ module rv32im_core (
                     2'b11: load_data = {24'd0, raw_load[31:24]};
                 endcase
             end
-            3'b101: begin // LHU
+            3'b101: begin
                 load_data = load_off[1] ? {16'd0, raw_load[31:16]}
                                         : {16'd0, raw_load[15:0]};
             end
@@ -513,9 +479,7 @@ module rv32im_core (
         endcase
     end
 
-    // =====================================================================
-    // ██  MEM/WB Pipeline Register  ██
-    // =====================================================================
+    // Pipeline registers between MEM and WB stages
     reg [31:0] mem_wb_alu;
     reg [31:0] mem_wb_load;
     reg [4:0]  mem_wb_rd;
@@ -537,23 +501,18 @@ module rv32im_core (
             mem_wb_wb_sel    <= ex_mem_wb_sel;
             mem_wb_pc4       <= ex_mem_pc4;
         end else begin
-            // When MEM stalls, WB receives a bubble
             mem_wb_reg_write <= 0;
         end
     end
 
-    // =====================================================================
-    // ██  WB  ██  Write-Back
-    // =====================================================================
+    // Writeback multiplexer and register file write control
     assign wb_rf_wr_data = (mem_wb_wb_sel == WB_MEM) ? mem_wb_load :
                            (mem_wb_wb_sel == WB_PC4) ? mem_wb_pc4  :
                                                        mem_wb_alu;
     assign wb_rf_wr_addr = mem_wb_rd;
     assign wb_rf_wr_en   = mem_wb_reg_write;
 
-    // =====================================================================
-    // ██  Hazard & Forwarding Units  ██
-    // =====================================================================
+    // Hazard detection unit instantiation
     hazard_unit u_hazard (
         .id_ex_mem_read (id_ex_mem_read && id_ex_valid),
         .id_ex_rd       (id_ex_rd),
@@ -571,6 +530,7 @@ module rv32im_core (
         .flush_id_ex    (flush_id_ex)
     );
 
+    // Operand forwarding unit instantiation
     forwarding_unit u_fwd (
         .ex_rs1        (id_ex_rs1_addr),
         .ex_rs2        (id_ex_rs2_addr),

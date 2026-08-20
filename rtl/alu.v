@@ -1,7 +1,4 @@
-// =============================================================================
-// RV32I ALU — Arithmetic / Logic Unit
-// Supports all base integer ALU operations.
-// =============================================================================
+// Arithmetic logic unit for integer operations
 module alu (
     input  wire [3:0]  alu_op,
     input  wire [31:0] a,
@@ -9,6 +6,7 @@ module alu (
     output reg  [31:0] result
 );
 
+    // ALU operation encoding parameters
     localparam ALU_ADD   = 4'd0;
     localparam ALU_SUB   = 4'd1;
     localparam ALU_SLL   = 4'd2;
@@ -19,8 +17,9 @@ module alu (
     localparam ALU_SRA   = 4'd7;
     localparam ALU_OR    = 4'd8;
     localparam ALU_AND   = 4'd9;
-    localparam ALU_PASSB = 4'd10;  // Pass operand B (used by LUI)
+    localparam ALU_PASSB = 4'd10;
 
+    // Operation execution multiplexer
     always @(*) begin
         case (alu_op)
             ALU_ADD:   result = a + b;

@@ -1,21 +1,15 @@
-// =============================================================================
-// Gowin rPLL wrapper — 27 MHz → 54 MHz
-// Parameters computed for GW2A-18:
-//   CLKOUT = 27 × (FBDIV_SEL+1) / (IDIV_SEL+1) = 27×2/1 = 54 MHz
-//   VCO    = CLKOUT × ODIV_SEL = 54×16 = 864 MHz  (500-1250 OK)
-// =============================================================================
 module pll_50mhz (
-    input  wire clk_in,      // 27 MHz oscillator
-    output wire clk_out,     // 54 MHz system clock
-    output wire lock         // PLL lock indicator
+    input  wire clk_in,
+    output wire clk_out,
+    output wire lock
 );
 
     rPLL #(
         .FCLKIN           ("27"),
         .DEVICE           ("GW2A-18"),
-        .IDIV_SEL         (0),       // IDIV = 1
-        .FBDIV_SEL        (1),       // FBDIV = 2  →  CLKOUT = 54 MHz
-        .ODIV_SEL         (16),      // ODIV  = 16 →  VCO = 864 MHz
+        .IDIV_SEL         (0),
+        .FBDIV_SEL        (1),
+        .ODIV_SEL         (16),
         .DYN_IDIV_SEL     ("false"),
         .DYN_FBDIV_SEL    ("false"),
         .DYN_ODIV_SEL     ("false"),

@@ -1,10 +1,5 @@
 `timescale 1ns / 1ps
 
-// =============================================================================
-// Behavioural simulation model for Gowin rPLL
-// Used by iverilog; Yosys uses the real primitive during synthesis.
-// Simply passes the clock through and asserts lock after a short delay.
-// =============================================================================
 /* verilator lint_off UNUSEDSIGNAL */
 module rPLL (
     input  wire       CLKIN,
@@ -24,7 +19,6 @@ module rPLL (
     output wire       CLKOUTD3
 );
 
-    // All parameters accepted but ignored in simulation
     parameter FCLKIN           = "100";
     parameter DEVICE           = "GW2A-18";
     parameter IDIV_SEL         = 0;
@@ -56,7 +50,6 @@ module rPLL (
     assign CLKOUTD = CLKIN;
     assign CLKOUTD3= CLKIN;
 
-    // Assert lock after a few cycles
     initial begin
         LOCK = 1'b0;
         #100;
